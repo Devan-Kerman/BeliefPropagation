@@ -7,17 +7,25 @@ A = graph.const("A", true_false, [.9, .1])
 B = graph.const("B", true_false, [.9, .1])
 
 C = graph.variable("C", true_false)
+D = graph.variable("D", true_false)
 
-graph.factor("A_AND_B", [A, B, C], lambda a, b, c: float((a or b) == c))
+E = graph.variable("E", true_false)
 
-for i in range(10):  # You can adjust the number of iterations
+graph.factor("C = A & B", [A, B, C], lambda a, b, c: float((a and b) == c))
+graph.factor("C = A | B", [A, B, D], lambda a, b, d: float((a or b) == d))
+
+for i in range(10):
     print(f"Epoch {i}")
     print(A)
     print(B)
     print(C)
+    print(D)
+    print(E)
     graph.update_all()
 
 print("Result:")
 print(A)
 print(B)
 print(C)
+print(D)
+print(E)

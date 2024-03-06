@@ -1,5 +1,3 @@
-import numpy as np
-
 import beliefprop as bp
 
 true_false = [True, False]

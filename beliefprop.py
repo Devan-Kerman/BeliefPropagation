@@ -3,6 +3,8 @@ import itertools
 import numpy as np
 from typing import Any, Callable, Dict, List
 
+epsilon = 1e-11
+
 class BeliefPropNode(object):
 	name: str
 
@@ -15,8 +17,8 @@ class BeliefPropNode(object):
 	def post_update(self):
 		pass
 
-vfilter = np.vectorize(lambda msg, prod: (1. if msg < 1e-6 < prod else msg))
-vfilter_rev = np.vectorize(lambda msg, prod, nz_prod: (nz_prod if msg < 1e-6 else prod / msg))
+vfilter = np.vectorize(lambda msg, prod: (msg if (msg > epsilon) or (prod <= epsilon) else 1.))
+vfilter_rev = np.vectorize(lambda msg, prod, nz_prod: (prod / msg if msg > epsilon else nz_prod))
 
 class ConstOrVarNode(BeliefPropNode):
 	domain: List[Any]
@@ -34,12 +36,16 @@ class ConstOrVarNode(BeliefPropNode):
 	def outbound_to(self, factor: 'FactorNode') -> np.ndarray:
 		pass
 
+	def uniform(self) -> np.ndarray:
+		return np.ones(shape=len(self.domain)) / len(self.domain)
+
 class ConstNode(ConstOrVarNode):
 	prob: np.ndarray
 
 	def __init__(self, name: str, domain: List[Any], prob: np.ndarray):
 		super().__init__(name, domain)
-		self.prob = (prob + 1e-6) / (prob + 1e-6).sum()
+		z = prob.sum()
+		self.prob = prob/z if z > epsilon else self.uniform()
 
 	def outbound_to(self, factor: 'FactorNode') -> np.ndarray:
 		return self.prob
@@ -59,7 +65,7 @@ class VariableNode(ConstOrVarNode):
 		self.outbound_new = dict()
 
 	def initial(self) -> np.ndarray:
-		return np.ones(shape=len(self.domain)) / len(self.domain)
+		return self.uniform()
 
 	def set_initial_outbound(self, factor: 'FactorNode'):
 		self.outbound[factor] = self.initial()
@@ -87,11 +93,10 @@ class VariableNode(ConstOrVarNode):
 			msg[:] = vfilter_rev(inbound, prod, nz_prod)
 
 	def post_update(self):
-		self.outbound, self.outbound_new = {k: (v + 1e-6) / (v + 1e-6).sum() for k, v in
-		                                    self.outbound_new.items()}, self.outbound
+		self.outbound, self.outbound_new = {k: v/v.sum() for k, v in self.outbound_new.items()}, self.outbound
 
 	def __str__(self):
-		inbound = np.prod([f.outbound[self] for f in self.outbound.keys()], axis=0) + 1e-6
+		inbound = np.prod([f.outbound[self] for f in self.outbound.keys()] + [np.ones(len(self.domain))], axis=0)
 		return f"P({self.name})={np.round(inbound / inbound.sum(), 3)}"
 
 class FactorNode(BeliefPropNode):
@@ -120,12 +125,12 @@ class FactorNode(BeliefPropNode):
 				for v, (i, _) in zip(self.arguments, x):
 					inbound = v.outbound_to(self)[i]
 					prod *= inbound
-					nz_prod *= 1. if inbound < 1e-6 < prod else inbound
+					nz_prod *= vfilter(inbound, prod)
 
 				for v, (i, _) in zip(self.arguments, x):
 					if v in self.outbound_new:
 						inbound = v.outbound_to(self)[i]
-						incr = f_prob * (nz_prod if inbound < 1e-6 else prod / inbound)
+						incr = f_prob * vfilter_rev(inbound, prod, nz_prod)
 						self.outbound_new[v][i] += incr
 
 	def post_update(self):
