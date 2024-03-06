@@ -1,9 +1,6 @@
 from __future__ import annotations
-
 import itertools
-
 import numpy as np
-
 from typing import Any, Callable, Dict, List
 
 class BeliefPropNode(object):
@@ -42,13 +39,13 @@ class ConstNode(ConstOrVarNode):
 
 	def __init__(self, name: str, domain: List[Any], prob: np.ndarray):
 		super().__init__(name, domain)
-		self.prob = prob
+		self.prob = (prob + 1e-6) / (prob + 1e-6).sum()
 
 	def outbound_to(self, factor: 'FactorNode') -> np.ndarray:
 		return self.prob
 
 	def __str__(self):
-		return f"P({self.name})={self.prob}"
+		return f"P({self.name})={np.round(self.prob, 3)}"
 
 class VariableNode(ConstOrVarNode):
 	domain: List[Any]
@@ -90,10 +87,11 @@ class VariableNode(ConstOrVarNode):
 			msg[:] = vfilter_rev(inbound, prod, nz_prod)
 
 	def post_update(self):
-		self.outbound, self.outbound_new = {k: v for k, v in self.outbound_new.items()}, self.outbound
+		self.outbound, self.outbound_new = {k: (v + 1e-6) / (v + 1e-6).sum() for k, v in
+		                                    self.outbound_new.items()}, self.outbound
 
 	def __str__(self):
-		inbound = np.prod([f.outbound[self] for f in self.outbound.keys()], axis=0)
+		inbound = np.prod([f.outbound[self] for f in self.outbound.keys()], axis=0) + 1e-6
 		return f"P({self.name})={np.round(inbound / inbound.sum(), 3)}"
 
 class FactorNode(BeliefPropNode):
@@ -115,7 +113,7 @@ class FactorNode(BeliefPropNode):
 
 	def update(self):
 		for x in itertools.product(*(enumerate(v.domain) for v in self.arguments)):
-			args = (v for _, v in x)
+			args = [v for _, v in x]
 			f_prob = self.function(*args)
 			if f_prob > 0:
 				prod, nz_prod = 1., 1.
@@ -124,12 +122,14 @@ class FactorNode(BeliefPropNode):
 					prod *= inbound
 					nz_prod *= 1. if inbound < 1e-6 < prod else inbound
 
-				for (v, msg), (i, _) in zip(self.outbound_new.items(), x):
-					inbound = v.outbound_to(self)[i]
-					msg[i] += f_prob * (nz_prod if inbound < 1e-6 else prod / inbound)
+				for v, (i, _) in zip(self.arguments, x):
+					if v in self.outbound_new:
+						inbound = v.outbound_to(self)[i]
+						incr = f_prob * (nz_prod if inbound < 1e-6 else prod / inbound)
+						self.outbound_new[v][i] += incr
 
 	def post_update(self):
-		self.outbound, self.outbound_new = {k: v for k, v in self.outbound_new.items()}, {k: k.initial() * 0 for k in self.outbound.keys()}
+		self.outbound, self.outbound_new = self.outbound_new, {k: k.initial() * 0 for k in self.outbound.keys()}
 
 	def __del__(self):
 		for arg in self.arguments:
@@ -157,11 +157,12 @@ class FactorGraph(object):
 			curr = table
 			for i in indices:
 				curr = curr[i]
-			return curr
+			return float(curr)
+
 		return self.factor(name, args, search_table)
 
 	def const(self, name: str, domain: List[Any], prob: List[float]):
-		const = ConstNode(name, domain, np.array(prob))
+		const = ConstNode(name, domain, np.array(prob, dtype=np.float32))
 		self.nodes.append(const)
 		return const
 
